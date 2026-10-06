@@ -1,0 +1,27 @@
+# Secretos y entornos
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Archivos generados, registros y temporales de Excel
+salidas/
+logs/
+~$*.xlsx
+*.tmp.xlsx
+
+# Ejecutable generado con construir_exe.ps1
+build/
+dist/
+
+# Documentación interna 
+Referencias/
+CLAUDE.md
+.claude/
+

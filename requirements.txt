@@ -1,0 +1,13 @@
+pandas>=2.1
+openpyxl>=3.1
+XlsxWriter>=3.1
+psycopg[binary]>=3.1
+pyodbc>=5.0   # Granjas_BI (SQL Server): usa el controlador ODBC "SQL Server" que trae Windows
+python-dotenv>=1.0
+pywin32>=306; sys_platform == "win32"   # tabla dinámica (automatiza Microsoft Excel)
+
+# Solo para ejecutar las pruebas
+pytest>=8.0
+
+# Solo para generar el ejecutable (construir_exe.ps1)
+pyinstaller>=6.16; sys_platform == "win32"
