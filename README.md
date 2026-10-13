@@ -2,7 +2,7 @@
 
 Aplicación de escritorio (Python + Tkinter) que lee el Excel de insumo con los lotes a encasetar y genera, por cada sociedad (ORIENTE y OCCIDENTE), un Excel con la proyección diaria de aves y de consumo de alimento por lote, sexo y día (la base equivalente a `BD_LOTE`) y la tabla dinámica de consumo por tipo de alimento (hoja `TABLERO`).
 
-Además de los lotes del insumo, incluye los lotes de reproductoras activos en Granjas_BI. Los días que ya tienen registro real reemplazan a los proyectados, y los demás se proyectan desde el último saldo real (ver [Datos reales](#datos-reales-granjas_bi)).
+Además de los lotes del insumo, incluye los lotes de reproductoras activos en Granjas_BI. Los días que ya tienen registro real reemplazan a los proyectados. Los días en que un lote no registró entre dos registros suyos no se proyectan, y los demás se proyectan desde el último saldo real (ver [Datos reales](#datos-reales-granjas_bi)).
 
 Los estándares, los nombres de alimento y las granjas se consultan directamente en PostgreSQL, y los datos reales en SQL Server (Granjas_BI); en el código no hay consumos ni estándares digitados a mano.
 
@@ -85,12 +85,12 @@ Columnas de `BD_LOTE` en los días proyectados (los días reales se describen en
 | ALIM H | SALDO H × PROY ALIM H/AVE / 1000 (kg/día) |
 | SEMANA AÑO | Igual a `WEEKNUM(FECHA; 2)` de Excel: semanas desde el lunes, la semana 1 contiene el 1 de enero |
 | TIPO ALIMENTO | `standard_data.feed_type` → `commercial_bi.public.materials.name` |
-| REGION | CENTRO si la granja está en `ZONA 6 REPRODUCTORAS`; SANTANDER en los demás casos |
+| REGION | OCCIDENTE: siempre BUGA. ORIENTE: CENTRO si la granja está en `ZONA 6 REPRODUCTORAS`; SANTANDER en los demás casos |
 | ETAPA | `standard_data.stage`: L → LEVANTE, P → PRODUCCIÓN |
 | CONSUMO ACUM | `standard_data.accumulated_bird_consumption` (g/ave acumulado). En los lotes con días reales: suma de PROY ALIM H/AVE desde el día 1 |
 | GRANJA | `farm_name` de la granja + espacio + NUCLEO (ej. AGUILAS 1); en los lotes de Granjas_BI, la granja actual |
 | SOCIEDAD | ORIENTE u OCCIDENTE según el regional de la granja del registro (ver [Sociedades](#sociedades)) |
-| TIPO DATO | PROYECTADO (o REAL en los días con registro en Granjas_BI) |
+| TIPO DATO | PROYECTADO; REAL en los días con registro en Granjas_BI; SIN REGISTRO en los días en que el lote no registró entre dos registros suyos (ver [Datos reales](#datos-reales-granjas_bi)) |
 
 ## Datos reales (Granjas_BI)
 
@@ -102,7 +102,7 @@ Se consultan en SQL Server (base `Granjas_BI`; servidor y credenciales en `.env`
 
 **Qué lotes**: los del insumo más los **activos** (con registros en los últimos `DIAS_LOTE_ACTIVO` = 7 días hasta la fecha de corte). Si un lote del insumo ya existe en Granjas_BI se usan sus datos reales (fecha, granja, núcleo, línea y aves) y se informa en `VALIDACIONES`; si su fecha difiere más de 30 días o su línea es otra, queda como advertencia.
 
-**Fecha de corte**: último día con carga completa. Granjas_BI carga los registros con rezago, así que se descartan los últimos días con menos del 90 % de las cabeceras habituales (mediana de los 7 días anteriores). La fecha de corte y los días descartados quedan en `VALIDACIONES`, igual que los días sin ningún registro (por ejemplo, del 02/09/2026 al 26/09/2026 no hay carga).
+**Fecha de corte**: último día con carga completa. Granjas_BI carga los registros con rezago, así que se descartan los últimos días con menos del 90 % de las cabeceras habituales (mediana de los 7 días anteriores). La fecha de corte y los días descartados quedan en `VALIDACIONES`, igual que los días sin ningún registro (por ejemplo, del 11/09/2026 al 06/10/2026 no hay carga).
 
 **Días reales** (TIPO DATO = REAL), por lote, sexo y día:
 
@@ -117,7 +117,15 @@ Se consultan en SQL Server (base `Granjas_BI`; servidor y credenciales en `.env`
 | TIPO ALIMENTO | Estándar por línea genética y sexo, en la edad del registro. Si la línea tiene más de un estándar se usa el `CodEstandar` del lote; si tampoco lo resuelve, `ESTANDAR_PREFERIDO` en `config.py` (ROSS hembra → 002; el 005 es "sobrepeso") |
 | REGION, GRANJA, SOCIEDAD | Granja y núcleo de la cabecera de ese día |
 
-El día de un traslado entre granjas, cuando las dos cabeceras tienen registros, se toman el saldo, la granja y la etapa de la más reciente y se suma el consumo de ambas. Los días sin registro (antes del primero, en días sin carga o después de la fecha de corte) se proyectan desde el último saldo real con la mortalidad y el consumo del estándar.
+El día de un traslado entre granjas, cuando las dos cabeceras tienen registros, se toman el saldo, la granja y la etapa de la más reciente y se suma el consumo de ambas.
+
+**Días sin registro del lote** (TIPO DATO = SIN REGISTRO): los días sin registro del lote hasta su último registro **no se proyectan**, sea un día suelto, un período largo o los días anteriores al primer registro. Quedan con ALIM H = 0. Los días entre dos registros llevan el saldo, la mortalidad, la etapa y la granja del registro anterior. Los anteriores al primer registro llevan las aves encasetadas como saldo, mortalidad 0, y la etapa y la granja del primer registro. En los datos revisados (12/10/2026) hay tres casos:
+
+- Días sueltos del levante (semanas 5 a 24), casi siempre domingo, miércoles o jueves. El registro siguiente trae un consumo normal y las salidas de aves de los dos días.
+- Del 11/09/2026 al 06/10/2026 Granjas_BI no tiene carga de ninguna granja; esos días quedan como SIN REGISTRO en todos los lotes con registros antes y después.
+- Lotes encasetados durante ese período (241, 242 y 1071), cuyo primer registro es el 07/10/2026; se informan con una advertencia.
+
+Como esos días suman 0, en estos lotes CONSUMO ACUM queda por debajo del consumo real por ave. Los días posteriores al último registro se proyectan desde ese saldo real, con la mortalidad y el consumo del estándar, hasta la semana final.
 
 ## Reglas y fuentes de datos
 
@@ -137,20 +145,20 @@ Errores (detienen la generación):
 - La proyección de una sociedad superaría el máximo de filas de una hoja de Excel.
 
 Advertencias (se genera igual):
-- La granja está inactiva, no tiene zona (se le asigna SANTANDER) o no tiene regional (se asigna a ORIENTE).
+- La granja está inactiva, no tiene zona (solo en ORIENTE; se le asigna SANTANDER) o no tiene regional (se asigna a ORIENTE).
 - El núcleo no está registrado en `mnl_broiler_breeder_house_details`.
 - El alimento del estándar no existe en `materials` (se muestra el código).
 - El consumo acumulado del estándar no coincide con la suma de su consumo diario.
-- Granjas_BI: las aves encasetadas del detalle no coinciden con las del primer día; las salidas superan las aves de la etapa (el saldo se deja en 0); un lote del insumo ya encasetado con otra fecha o línea.
+- Granjas_BI: las aves encasetadas del detalle no coinciden con las del primer día; las salidas superan las aves de la etapa (el saldo se deja en 0); un lote del insumo ya encasetado con otra fecha o línea; lotes sin registros desde el encasetamiento (con la fecha y el día de edad de su primer registro).
 
-Información: fecha de corte de los datos reales, días sin carga en Granjas_BI y lotes del insumo que ya están encasetados.
+Información: fecha de corte de los datos reales, días sin carga en Granjas_BI, días sin registro de cada lote (SIN REGISTRO) y lotes del insumo que ya están encasetados.
 
 ## Diferencias frente al Excel anterior
 
 | Tema | Excel anterior | Aplicación |
 |---|---|---|
 | Archivos | Un solo libro con todas las granjas | Un archivo por sociedad (ORIENTE / OCCIDENTE) según el regional de la granja |
-| Datos reales | Solo las aves encasetadas reales digitadas en `RECEPCIONES`; todos los días se calculan con el estándar | Los días con registro en Granjas_BI son reales (aves, saldo, consumo); los demás se proyectan desde el último saldo real |
+| Datos reales | Solo las aves encasetadas reales digitadas en `RECEPCIONES`; todos los días se calculan con el estándar | Los días con registro en Granjas_BI son reales (aves, saldo, consumo); los días sin registro del lote entre dos registros suyos quedan en 0; los demás se proyectan desde el último saldo real |
 | Lotes | Los digitados en `RECEPCIONES` | Los del insumo más los activos en Granjas_BI |
 | FECHA | FECHA ENCASETAMIENTO + EDAD DIA (el día 1 es el día siguiente al encasetamiento) | FECHA ENCASETAMIENTO + EDAD DIA − 1 (el día 1 es el día del encasetamiento, como en Granjas_BI) |
 | Horizonte | 455 días (65 semanas) | Parámetro; por defecto 448 días (64 semanas) |
@@ -159,7 +167,7 @@ Información: fecha de corte de los datos reales, días sin carga en Granjas_BI 
 | Nombres de alimento | Cortos (POLLITA, FASE 1 ROSS…) | Nombre del material (ALIMENTO POLLITA GRANEL…) |
 | CONSUMO ACUM | Suma de valores semanales que se reinicia en la semana 25 | Acumulado g/ave de la base desde el día 1 |
 | Tabla dinámica del TABLERO | Suma **CONSUMO ACUM** (gramos acumulados por ave) | Suma **ALIM H** (kg proyectados); se cambia con `TABLA_DINAMICA_VALOR` en `config.py` |
-| Región | Lista manual (R999 = NUEVA, región 0) | Zona de la granja en la base (R999 = COMPRA HUEVOS, sin zona) |
+| Región | Lista manual (R999 = NUEVA, región 0) | OCCIDENTE: BUGA; ORIENTE: zona de la granja en la base (R999 = COMPRA HUEVOS, regional 1GV: BUGA) |
 | Granja | Nombre manual (VENT-1-LA VENTA, LIRIOS Y CORRALES) | `farm_name` + núcleo (VENTANITAS 1 1, LOS LIRIOS-EL CORRAL 1) |
 | Columnas ID, ID MORT, ID GENÉTICA | Llaves de búsqueda | Eliminadas |
 

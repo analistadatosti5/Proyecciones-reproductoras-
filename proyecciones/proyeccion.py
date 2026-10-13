@@ -1,7 +1,8 @@
 """Lógica de negocio: construye la base diaria equivalente a BD_LOTE.
 
 Un registro por lote, sexo y día de edad (1 .. semana_final x 7). Los días con datos
-reales en Granjas_BI (ver reales.py) los toman tal cual; los demás se proyectan:
+reales en Granjas_BI y los días sin registro hasta el último registro del lote (consumo 0, ver
+reales.py) se toman tal cual; los demás se proyectan:
 
     AVES+2%          aves del día 1. Lotes del insumo: H = hembras pedido x (1 + % adicional),
                      M = hembras pedido x % machos x (1 + % adicional). Lotes reales: las
@@ -51,6 +52,7 @@ _TIPOS_REALES = {
     "ETAPA": "object",
     "CENTRO GRANJA": "object",
     "NUCLEO": "object",
+    "TIPO DATO": "object",
 }
 _CLAVES = ["LOTE", "SEXO", "EDAD DIA"]
 
@@ -78,8 +80,9 @@ def construir_proyeccion(
     """Devuelve la proyección diaria con las columnas de config.COLUMNAS_RESULTADO.
 
     `lote_sexo`: un registro por lote y sexo (COLUMNAS_LOTE_SEXO) con las aves del día 1.
-    `reales`: registros reales por lote, sexo y día (reales.COLUMNAS_DIARIO). Reemplazan a los
-    proyectados y los días siguientes se proyectan desde el último saldo real.
+    `reales`: registros reales por lote, sexo y día (reales.COLUMNAS_DIARIO), incluidos los días
+    SIN REGISTRO. Reemplazan a los proyectados y los días siguientes se proyectan desde el último
+    saldo real.
     """
     dias = parametros.dias
     lote_sexo = lote_sexo[COLUMNAS_LOTE_SEXO].reset_index(drop=True)
@@ -140,7 +143,7 @@ def construir_proyeccion(
     base["ETAPA"] = etapa.map(config.ETAPAS).fillna(etapa)
     base["CENTRO GRANJA"] = base["REAL CENTRO GRANJA"].where(es_real, base["CENTRO GRANJA"])
     base["NUCLEO"] = base["REAL NUCLEO"].where(es_real, base["NUCLEO"])
-    base["TIPO DATO"] = np.where(es_real, config.TIPO_DATO_REAL, config.TIPO_DATO_PROYECTADO)
+    base["TIPO DATO"] = base["REAL TIPO DATO"].where(es_real, config.TIPO_DATO_PROYECTADO)
     base["SEMANA AÑO"] = semana_anio_excel(base["FECHA"])
 
     # 5) Granja, región y sociedad del registro (en los días reales, la granja de ese día).
@@ -210,14 +213,16 @@ def _sociedad(regional_code: pd.Series) -> np.ndarray:
 
 
 def granjas_con_region(granjas: pd.DataFrame) -> pd.DataFrame:
-    """farm_code, farm_name, REGION según la zona de la granja y SOCIEDAD según su regional."""
+    """farm_code, farm_name, SOCIEDAD según su regional y REGION (Occidente: BUGA; Oriente: según la zona)."""
     zona = granjas["zone_name"].fillna("").str.strip().str.upper()
+    sociedad = _sociedad(granjas["regional_code"])
+    region_oriente = np.where(zona.isin(config.ZONAS_REGION_CENTRO), config.REGION_CENTRO, config.REGION_POR_DEFECTO)
     return pd.DataFrame(
         {
             "farm_code": granjas["farm_code"],
             "farm_name": granjas["farm_name"],
-            "REGION": np.where(zona.isin(config.ZONAS_REGION_CENTRO), config.REGION_CENTRO, config.REGION_POR_DEFECTO),
-            "SOCIEDAD": _sociedad(granjas["regional_code"]),
+            "REGION": np.where(sociedad == config.SOCIEDAD_OCCIDENTE, config.REGION_OCCIDENTE, region_oriente),
+            "SOCIEDAD": sociedad,
         }
     ).drop_duplicates("farm_code")
 

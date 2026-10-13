@@ -43,6 +43,12 @@ def test_granja_sin_zona_sin_regional_e_inactiva(lotes, referencia, mapa_estanda
     assert any("no tiene regional; se asigna a la sociedad ORIENTE" in d for d in detalles)
 
 
+def test_granja_de_occidente_sin_zona_no_se_advierte(lotes, referencia, mapa_estandar):
+    referencia.granjas.loc[0, ["zone_name", "regional_code"]] = [None, "1GV"]  # región BUGA, no depende de la zona
+    mensajes = validar_contra_bd(lotes, referencia, list(mapa_estandar.values()), dias=14)
+    assert not any("no tiene zona" in m.detalle for m in mensajes)
+
+
 def test_estandar_sin_cobertura_para_la_semana_final(lotes, referencia, mapa_estandar):
     mensajes = validar_contra_bd(lotes, referencia, list(mapa_estandar.values()), dias=21)  # el estándar cubre 14 días
     assert sum(m.nivel == Nivel.ERROR and "no tiene datos" in m.detalle for m in mensajes) == 2

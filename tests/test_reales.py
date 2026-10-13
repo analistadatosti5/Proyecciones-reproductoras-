@@ -154,6 +154,43 @@ def test_mensajes_de_corte_y_dias_sin_carga(datos):
     assert any("en 1 días (03/01/2026)" in d for d in detalles)
 
 
+def test_dias_sin_registro_entre_registros_quedan_con_consumo_0(datos):
+    # Hembras sin registro el día 5; machos sin registro los días 2 y 3 (el 3 sin carga de ninguna granja).
+    sin_dia = ((datos.dias["id_encaseta"] == 2) & (datos.dias["sexo"] == "H") & (datos.dias["edad"] == 5)) | (
+        (datos.dias["sexo"] == "M") & datos.dias["edad"].isin([2, 3])
+    )
+    datos.dias = datos.dias[~sin_dia]
+    datos.carga = datos.carga[datos.carga["fecha"] != pd.Timestamp("2026-01-03")]
+    lotes_reales = reales.consolidar(datos)
+    diario = lotes_reales.diario.set_index(["LOTE", "SEXO", "EDAD DIA"])
+
+    dia5 = diario.loc[(500, "H", 5)]
+    assert dia5["TIPO DATO"] == "SIN REGISTRO" and dia5["ALIM H"] == 0
+    assert dia5["FECHA"] == pd.Timestamp("2026-01-05") and dia5["SEMANA"] == 1
+    assert dia5["SALDO H"] == diario.loc[(500, "H", 4), "SALDO H"] and dia5["CENTRO GRANJA"] == "R011"
+    machos = diario.loc[(500, "M")]
+    assert machos.loc[[2, 3], "TIPO DATO"].tolist() == ["SIN REGISTRO", "SIN REGISTRO"]
+    assert machos.loc[3, "FECHA"] == pd.Timestamp("2026-01-03") and machos.loc[3, "SALDO H"] == machos.loc[1, "SALDO H"]
+    assert (diario.drop(index=[(500, "H", 5), (500, "M", 2), (500, "M", 3)])["TIPO DATO"] == "REAL").all()
+    aviso = next(m for m in lotes_reales.mensajes if m.detalle.startswith("3 días"))
+    assert aviso.nivel == Nivel.INFO and aviso.lote == "500"
+
+
+def test_dias_antes_del_primer_registro_quedan_sin_registro(datos):
+    # Machos sin registros los días 1 y 2: el primer registro es el día 3.
+    datos.dias = datos.dias[~((datos.dias["sexo"] == "M") & datos.dias["edad"].isin([1, 2]))]
+    lotes_reales = reales.consolidar(datos)
+    machos = lotes_reales.diario.set_index(["LOTE", "SEXO", "EDAD DIA"]).loc[(500, "M")]
+
+    assert machos.loc[[1, 2], "TIPO DATO"].tolist() == ["SIN REGISTRO", "SIN REGISTRO"]
+    assert machos.loc[1, "FECHA"] == DIA1 and machos.loc[2, "FECHA"] == DIA1 + pd.Timedelta(days=1)
+    assert machos.loc[1, "SALDO H"] == 100 and machos.loc[1, "MORTALIDAD H"] == 0  # aves encasetadas
+    assert machos.loc[1, "ALIM H"] == 0 and machos.loc[1, "CENTRO GRANJA"] == "R010"
+    assert machos.loc[3, "TIPO DATO"] == "REAL"
+    aviso = next(m for m in lotes_reales.mensajes if "desde el encasetamiento" in m.detalle)
+    assert aviso.nivel == Nivel.ADVERTENCIA and aviso.lote == "500" and "500 (03/01/2026, día 3)" in aviso.detalle
+
+
 def test_sin_datos_reales_todo_se_proyecta():
     lotes_reales = reales.consolidar(DatosReales.vacios())
     assert lotes_reales.lotes.empty and lotes_reales.diario.empty

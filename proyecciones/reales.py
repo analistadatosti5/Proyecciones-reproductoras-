@@ -17,6 +17,11 @@ Por cabecera y sexo:
 Los días en que dos cabeceras del lote tienen registros (traslado entre granjas) toman el
 saldo, la granja y la etapa de la más reciente y suman el consumo de ambas.
 
+Los días sin registro del lote hasta su último registro no se proyectan: un día suelto, un
+período largo (también los días sin carga de ninguna granja) o los días anteriores al primer
+registro. Quedan con TIPO DATO = SIN REGISTRO, consumo 0 y el saldo del registro anterior (antes
+del primero, las aves encasetadas).
+
 El módulo no accede a bases de datos: recibe DataFrames (ver repositorio.cargar_datos_reales).
 """
 
@@ -44,6 +49,7 @@ COLUMNAS_DIARIO = [
     "ETAPA",
     "CENTRO GRANJA",
     "NUCLEO",
+    "TIPO DATO",  # REAL o SIN REGISTRO
 ]
 # Salidas de aves de cada día; las agregadas menos las transferidas se suman al saldo.
 _SALIDAS = ["seleccion", "mortalidad", "mortalidad_transporte", "aves_vendidas", "aves_sacrificio"]
@@ -93,6 +99,7 @@ def consolidar(datos: DatosReales) -> LotesReales:
     dias, aves = _dias_por_cabecera(datos.dias, cabeceras, mensajes)
     diario = _diario_por_lote(dias, mensajes)
     lotes, lote_sexo = _lotes(cabeceras, aves, diario)
+    diario = _con_dias_sin_registro(diario, mensajes)
     granjas = (
         cabeceras[["lote", "granja", "nucleo"]]
         .drop_duplicates()
@@ -239,8 +246,70 @@ def _diario_por_lote(d: pd.DataFrame, mensajes: list[Mensaje]) -> pd.DataFrame:
             "ETAPA": actual["etapa"],
             "CENTRO GRANJA": actual["granja"],
             "NUCLEO": actual["nucleo"],
+            "TIPO DATO": config.TIPO_DATO_REAL,
         }
     ).sort_values(["LOTE", "SEXO", "EDAD DIA"], ignore_index=True)
+
+
+def _con_dias_sin_registro(diario: pd.DataFrame, mensajes: list[Mensaje]) -> pd.DataFrame:
+    """Agrega los días sin registro de cada lote y sexo hasta su último registro (TIPO DATO = SIN REGISTRO).
+
+    No se proyectan y toman consumo 0. Los días entre dos registros llevan el saldo, la mortalidad,
+    la etapa y la granja del registro anterior; los anteriores al primer registro, las aves
+    encasetadas (sin mortalidad) y la etapa y la granja del primer registro.
+    """
+    if diario.empty:
+        return diario
+    diario = diario.sort_values(["LOTE", "SEXO", "EDAD DIA"], ignore_index=True)
+    siguiente = diario.groupby(["LOTE", "SEXO"])["EDAD DIA"].shift(-1)
+    entre = _desplazados(diario, (siguiente - diario["EDAD DIA"] - 1).fillna(0).clip(lower=0), 1)
+    primero = diario.drop_duplicates(["LOTE", "SEXO"])
+    antes = _desplazados(primero, (primero["EDAD DIA"] - 1).clip(lower=0), -1)  # hay registros con edad 0
+    antes = antes.assign(**{"SALDO H": antes["AVES+2%"], "MORTALIDAD H": 0.0})
+    huecos = pd.concat([antes, entre], ignore_index=True)
+    if huecos.empty:
+        return diario
+    huecos = huecos.assign(
+        **{
+            "SEMANA": (huecos["EDAD DIA"] - 1) // config.DIAS_POR_SEMANA + 1,
+            "ALIM H": 0.0,
+            "TIPO DATO": config.TIPO_DATO_SIN_REGISTRO,
+        }
+    )
+    mensajes.append(
+        Mensaje(
+            Nivel.INFO,
+            ORIGEN,
+            f"{len(huecos)} días de lote y sexo no tienen registro en Granjas_BI antes del último registro del "
+            f"lote y no se proyectan: quedan con consumo 0 (TIPO DATO = {config.TIPO_DATO_SIN_REGISTRO}).",
+            lote=_lista(huecos["LOTE"]),
+        )
+    )
+    if not antes.empty:
+        inicio = primero[primero["EDAD DIA"] > 1].sort_values("EDAD DIA").drop_duplicates("LOTE").sort_values("LOTE")
+        lotes = "; ".join(
+            f"{lote} ({fecha:%d/%m/%Y}, día {edad})"
+            for lote, fecha, edad in zip(inicio["LOTE"], inicio["FECHA"], inicio["EDAD DIA"])
+        )
+        mensajes.append(
+            Mensaje(
+                Nivel.ADVERTENCIA,
+                ORIGEN,
+                f"Lotes sin registros desde el encasetamiento (primer registro: fecha y día de edad): {lotes}. "
+                f"Los días anteriores quedan como {config.TIPO_DATO_SIN_REGISTRO} con las aves encasetadas.",
+                lote=_lista(inicio["LOTE"]),
+            )
+        )
+    return pd.concat([diario, huecos], ignore_index=True).sort_values(["LOTE", "SEXO", "EDAD DIA"], ignore_index=True)
+
+
+def _desplazados(registros: pd.DataFrame, veces: pd.Series, sentido: int) -> pd.DataFrame:
+    """Copia cada registro `veces` veces corriendo la edad y la fecha 1, 2, ... días hacia adelante (1) o atrás (-1)."""
+    copias = registros.loc[registros.index.repeat(veces.astype("int64"))]
+    dias = (copias.groupby(level=0).cumcount().to_numpy() + 1) * sentido
+    return copias.assign(
+        **{"EDAD DIA": copias["EDAD DIA"].to_numpy() + dias, "FECHA": copias["FECHA"] + pd.to_timedelta(dias, unit="D")}
+    )
 
 
 def _lotes(cabeceras: pd.DataFrame, aves: pd.DataFrame, diario: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -307,8 +376,8 @@ def _mensajes_sin_carga(datos: DatosReales, lotes: pd.DataFrame) -> list[Mensaje
         Mensaje(
             Nivel.INFO,
             ORIGEN,
-            f"Granjas_BI no tiene registros de reproductoras en {len(faltantes)} días ({'; '.join(rangos)}); "
-            "esos días se proyectan desde el último saldo real de cada lote.",
+            f"Granjas_BI no tiene registros de reproductoras en {len(faltantes)} días ({'; '.join(rangos)}). "
+            f"En los lotes con registros antes y después quedan como {config.TIPO_DATO_SIN_REGISTRO} (consumo 0).",
         )
     ]
 

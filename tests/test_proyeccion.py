@@ -7,6 +7,7 @@ from proyecciones import config
 from proyecciones.modelos import ParametrosProyeccion
 from proyecciones.proyeccion import (
     construir_proyeccion,
+    granjas_con_region,
     lote_sexo_insumo,
     mortalidad_acumulada,
     semana_anio_excel,
@@ -92,6 +93,7 @@ def _reales(**columnas) -> pd.DataFrame:
         "ETAPA": ["L"] * n,
         "CENTRO GRANJA": ["R021"] * n,
         "NUCLEO": ["2"] * n,
+        "TIPO DATO": ["REAL"] * n,
     }
     datos.update(columnas)
     return pd.DataFrame(datos)
@@ -130,6 +132,24 @@ def test_despues_del_ultimo_dia_real_se_proyecta_desde_su_saldo(lote_sexo, refer
     assert dia6["CONSUMO ACUM"] == pytest.approx(21 + 22 + 23 + 700 * 1000 / 35000 + 25 + 26)
 
 
+def test_dia_sin_registro_entre_dos_reales_no_se_proyecta(lote_sexo, referencia):
+    reales = _reales(
+        **{
+            "EDAD DIA": [3, 4, 5],
+            "SALDO H": [35800.0, 35800.0, 35700.0],
+            "ALIM H": [700.0, 0.0, 1400.0],
+            "TIPO DATO": ["REAL", "SIN REGISTRO", "REAL"],
+        }
+    )
+    base = construir_proyeccion(lote_sexo, referencia, PARAMETROS, reales).set_index(["LOTE", "SEXO", "EDAD DIA"])
+    dia4 = base.loc[(1071, "H", 4)]
+    assert dia4["TIPO DATO"] == "SIN REGISTRO"
+    assert dia4["ALIM H"] == 0 and dia4["PROY ALIM H/AVE"] == 0
+    assert dia4["SALDO H"] == 35800  # saldo del registro anterior
+    # El consumo acumulado por ave no suma nada el día sin registro.
+    assert base.loc[(1071, "H", 5), "CONSUMO ACUM"] == pytest.approx(21 + 22 + 700 * 1000 / 35800 + 1400 * 1000 / 35700)
+
+
 def test_sociedad_segun_regional_de_la_granja():
     lotes = pd.DataFrame({"CENTRO GRANJA": ["R001", "R501", "E501", "R999", "R000"]}, index=[10, 11, 12, 13, 14])
     granjas = pd.DataFrame(
@@ -140,6 +160,19 @@ def test_sociedad_segun_regional_de_la_granja():
     # R999 sin regional -> Oriente; R000 no existe en la base -> sin sociedad
     assert sociedades.iloc[:4].tolist() == ["ORIENTE", "OCCIDENTE", "OCCIDENTE", "ORIENTE"]
     assert pd.isna(sociedades.iloc[4])
+
+
+def test_region_occidente_es_buga_y_oriente_segun_la_zona():
+    granjas = pd.DataFrame(
+        {
+            "farm_code": ["R001", "R021", "R030", "R501", "R502"],
+            "farm_name": ["A", "B", "C", "D", "E"],
+            "zone_name": ["ZONA 3 REPRODUCTORAS", "ZONA 6 REPRODUCTORAS", None, "ZONA 6 REPRODUCTORAS", None],
+            "regional_code": ["1GR", "1GR", "1GR", "1GV", "1GB"],
+        }
+    )
+    regiones = granjas_con_region(granjas).set_index("farm_code")["REGION"]
+    assert regiones.tolist() == ["SANTANDER", "CENTRO", "SANTANDER", "BUGA", "BUGA"]
 
 
 def test_mortalidad_acumulada_empalma_el_reinicio_de_la_bd():

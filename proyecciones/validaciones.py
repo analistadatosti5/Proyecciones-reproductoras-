@@ -152,7 +152,9 @@ def _validar_granjas(lotes: pd.DataFrame, granjas: pd.DataFrame) -> list[Mensaje
                     lote=lista,
                 )
             )
-        if pd.isna(granja["zone_name"]) or not str(granja["zone_name"]).strip():
+        regional = "" if pd.isna(granja["regional_code"]) else str(granja["regional_code"]).strip().upper()
+        de_oriente = regional not in config.REGIONALES_OCCIDENTE  # en Occidente la región no depende de la zona
+        if de_oriente and (pd.isna(granja["zone_name"]) or not str(granja["zone_name"]).strip()):
             mensajes.append(
                 Mensaje(
                     Nivel.ADVERTENCIA,
@@ -162,7 +164,7 @@ def _validar_granjas(lotes: pd.DataFrame, granjas: pd.DataFrame) -> list[Mensaje
                     lote=lista,
                 )
             )
-        if pd.isna(granja["regional_code"]) or not str(granja["regional_code"]).strip():
+        if not regional:
             mensajes.append(
                 Mensaje(
                     Nivel.ADVERTENCIA,

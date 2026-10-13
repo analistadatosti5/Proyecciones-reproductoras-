@@ -58,9 +58,11 @@ ETAPAS = {"L": "LEVANTE", "P": "PRODUCCIÓN"}  # traducción de standard_data.st
 # ---------------------------------------------------------------------------
 # Granjas y regiones (analitica: public.mnl_broiler_breeder_farms)
 # ---------------------------------------------------------------------------
+REGION_OCCIDENTE = "BUGA"  # todas las granjas de la sociedad OCCIDENTE, sin importar la zona
+# Granjas de ORIENTE: CENTRO si su zona está en ZONAS_REGION_CENTRO; si no, REGION_POR_DEFECTO.
 ZONAS_REGION_CENTRO = frozenset({"ZONA 6 REPRODUCTORAS"})  # zone_name en mayúsculas
 REGION_CENTRO = "CENTRO"
-REGION_POR_DEFECTO = "SANTANDER"  # todas las demás granjas
+REGION_POR_DEFECTO = "SANTANDER"  # las demás granjas de ORIENTE
 CLASE_GRANJA_REPRODUCTORAS = "R"  # flock_class esperado
 ESTADO_GRANJA_ACTIVA = "A"
 
@@ -89,6 +91,9 @@ DIAS_REFERENCIA_CARGA = 7
 DIAS_TOLERANCIA_ENCASETAMIENTO = 30  # se advierte si la fecha real difiere más de N días de la del insumo
 TIPO_DATO_REAL = "REAL"
 TIPO_DATO_PROYECTADO = "PROYECTADO"
+# Día sin registro del lote antes de su último registro (un día suelto, un período largo o los días
+# anteriores al primer registro): no se proyecta (consumo 0).
+TIPO_DATO_SIN_REGISTRO = "SIN REGISTRO"
 
 # ---------------------------------------------------------------------------
 # Archivo de insumo
@@ -121,7 +126,7 @@ COLUMNAS_RESULTADO = (
     "CONSUMO ACUM",
     "GRANJA",
     "SOCIEDAD",
-    "TIPO DATO",  # REAL (Granjas_BI) o PROYECTADO
+    "TIPO DATO",  # REAL (Granjas_BI), SIN REGISTRO o PROYECTADO
 )
 HOJA_BASE = "BD_LOTE"
 HOJA_VALIDACIONES = "VALIDACIONES"
